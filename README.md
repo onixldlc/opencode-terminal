@@ -42,7 +42,7 @@ Models are addressed `provider/model`, e.g. `zai/glm-5.3`, `zai/glm-4.7`, `zai-c
 docker run --rm -e ZHIPU_API_KEY ghcr.io/onixldlc/opencode-terminal:latest models zai
 ```
 
-The alternative to the env var is `/connect` inside the TUI (or `opencode auth login`), which writes `~/.local/share/opencode/auth.json` in the mounted config dir.
+The alternative is logging in once: `/connect` inside the TUI, or `opencode auth login --provider zai`. The credential goes into the `credential` table of `~/.local/share/opencode/opencode.db`, which lives in the mounted config dir — so later runs need no `-e` at all. (`auth.json` is the older location some docs still mention; opencode 1.19 writes the database.) `opencode auth list` shows what is stored, `opencode auth logout` clears it.
 
 Pick the model per run, no config edit:
 
@@ -99,8 +99,8 @@ The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer
 | `~/.config/opencode/opencode.jsonc` | Config: model, agents, instructions |
 | `~/.config/opencode/AGENTS.md` | Global system prompt |
 | `~/.config/opencode/tui.json` | TUI-only settings (theme, cursor, mouse) |
-| `~/.local/share/opencode/auth.json` | Provider credentials |
-| `~/.local/share/opencode/opencode.db` | Sessions, messages, projects (SQLite) |
+| `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
+| `~/.local/share/opencode/auth.json` | Legacy credential file, if an older version wrote one |
 
 ## build locally
 

@@ -91,9 +91,13 @@ if [[ -n "$OVERRIDE" ]]; then
 fi
 
 # No key, no providers: every GLM provider on models.dev authenticates through
-# ZHIPU_API_KEY, and `opencode auth login` is the alternative.
-if [[ -z "${ZHIPU_API_KEY:-}" && ! -e "$OC_DATA_DIR/auth.json" ]]; then
-  echo "[opencode-terminal] no ZHIPU_API_KEY and no $OC_DATA_DIR/auth.json — run '/connect' in the TUI or 'opencode auth login' to add a provider" >&2
+# ZHIPU_API_KEY, and `opencode auth login` is the alternative. A completed login
+# is stored in the `credential` table of opencode.db (auth.json is the legacy
+# location), so the presence of either file means credentials may already exist
+# and the hint would be noise.
+if [[ -z "${ZHIPU_API_KEY:-}" && ! -e "$OC_DATA_DIR/auth.json" && ! -e "$OC_DATA_DIR/opencode.db" ]]; then
+  echo "[opencode-terminal] no credentials yet: export ZHIPU_API_KEY, or run 'opencode auth login' once ('/connect' inside the TUI)." >&2
+  echo "[opencode-terminal] a login is saved in $OC_DATA_DIR/opencode.db and persists in the mounted config dir." >&2
 fi
 
 exec opencode "$@"
