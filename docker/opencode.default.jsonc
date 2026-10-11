@@ -1,0 +1,28 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Default model, provider/model. Rendered from OPENCODE_DEFAULT_MODEL when
+  // this file was seeded. GLM ids come from models.dev:
+  //   zai/*                 Z.AI pay-as-you-go API     (api.z.ai/api/paas/v4)
+  //   zai-coding-plan/*     Z.AI GLM Coding Plan       (api.z.ai/api/coding/paas/v4)
+  //   zhipuai/*             Zhipu AI, mainland         (open.bigmodel.cn)
+  //   zhipuai-coding-plan/* Zhipu coding plan
+  // All four read the ZHIPU_API_KEY env var, so exporting it on the host is
+  // enough; `opencode auth login` writes ~/.local/share/opencode/auth.json
+  // instead, which persists in the mounted config dir.
+  // `opencode models` lists every id your key unlocks.
+  "model": "__MODEL__",
+
+  // Extra system prompt files, on top of ~/.config/opencode/AGENTS.md and the
+  // project's own AGENTS.md. Accepts paths, globs and https URLs.
+  "instructions": [],
+
+  // Per-agent system prompts and permissions. "prompt" takes literal text or
+  // {file:/abs/path.md}. Uncomment to pin a different model per agent.
+  "agent": {
+    // "build": { "mode": "primary", "prompt": "{file:/home/dev/.config/opencode/AGENTS.md}" },
+    // "plan":  { "mode": "primary", "model": "zai/glm-5.3-flash" }
+  },
+
+  "autoupdate": false
+}
