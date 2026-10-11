@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version override (e.g. 1.1.1). Empty = read the VERSION file.'
+        description: 'Version override (e.g. v1.1.1 or v1.1.0-r2). Empty = read the VERSION file.'
         required: false
         default: ''
       publish:
@@ -50,8 +50,8 @@ jobs:
             exit 1
           fi
 
-          # The file holds the bare number; the image tag and the git tag are
-          # both v-prefixed. An input may arrive either way.
+          # The file carries the v itself (v1.1.0), optionally with a rebuild
+          # revision (v1.1.0-r2). A bare input still gets the prefix.
           [[ "${VERSION}" == v* ]] || VERSION="v${VERSION}"
 
           # Docker tags allow a narrow character set; sanitise rather than fail.

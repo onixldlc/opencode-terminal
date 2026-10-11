@@ -118,15 +118,19 @@ Pin a different opencode release with `--build-arg OPENCODE_VERSION=1.19.0`.
 
 The **major** tracks [llm-terminal](https://github.com/onixldlc/llm-terminal) — currently `1.x` (`1.1.1-r2` on GHCR), so this starts at `1.1.0`. Minor and patch are this repo's own: they are fixes against opencode, and those don't translate one-to-one to the claude image.
 
-`VERSION` holds the bare number (`1.1.0`); every tag it produces is `v`-prefixed — the image as `v1.1.0` plus `latest`, and the git tag as `v1.1.0`. The `-rN` rebuild counter llm-terminal uses is gone: a `VERSION` bump is the only trigger here, so a rebuild of the same code is a patch bump.
+`VERSION` holds the tag verbatim, `v` included — currently `v1.1.0`. That value becomes the image tag (`v1.1.0`, alongside `latest`) and the git tag. llm-terminal's `-rN` rebuild counter still exists, but it is no longer computed by scanning the registry: to rebuild the same code, write the revision into the file yourself.
+
+```bash
+echo v1.1.0-r2 > VERSION   # same code, second build
+```
 
 ## releasing
 
 No `git tag` needed. Edit **`VERSION`** on `main` — from the web editor is fine — and the push builds, smoke tests, pushes `vX.Y.Z` + `latest` to GHCR, then creates the tag and release.
 
 ```bash
-echo 1.1.1 > VERSION
-git commit -am "release 1.1.1" && git push
+echo v1.1.1 > VERSION
+git commit -am "release v1.1.1" && git push
 ```
 
 Build without publishing: Actions → Build and Push → Run workflow → untick **publish**.
