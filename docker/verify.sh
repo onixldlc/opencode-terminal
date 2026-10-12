@@ -33,6 +33,18 @@ for f in /opt/opencode/opencode.default.jsonc /opt/opencode/AGENTS.default.md; d
   [[ -r "$f" ]] && ok "$f" || bad "$f missing"
 done
 
+echo "== xdg tree =="
+# These must exist in the image and be writable by dev. If they don't, podman
+# creates them root-owned while making the bind-mount targets, and opencode
+# dies with EACCES on mkdir '/home/dev/.local/state'.
+for d in /home/dev/.config /home/dev/.local /home/dev/.local/share /home/dev/.local/state /home/dev/.cache; do
+  if [[ -d "$d" && -w "$d" ]]; then
+    ok "$d writable ($(stat -c '%U:%G %a' "$d"))"
+  else
+    bad "$d missing or not writable by $(id -un)"
+  fi
+done
+
 # Everything below runs against a throwaway HOME so the check never writes into
 # a mounted config dir.
 probe="$(mktemp -d)"

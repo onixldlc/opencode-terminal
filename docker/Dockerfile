@@ -58,6 +58,13 @@ RUN userdel -r node 2>/dev/null || true \
  && mkdir -p $HOME/work \
  && chown -R $UID:$GID $HOME
 
+# Pre-create the XDG tree dev-owned. The CLI bind-mounts .config/opencode and
+# .local/share/opencode; if their parents are missing, podman creates the whole
+# chain as root and then dev can't write siblings like .local/state — opencode
+# dies with EACCES on mkdir '/home/dev/.local/state'.
+RUN mkdir -p $HOME/.config/opencode $HOME/.local/share/opencode $HOME/.local/state $HOME/.cache \
+ && chown -R $UID:$GID $HOME/.config $HOME/.local $HOME/.cache
+
 USER dev
 WORKDIR $HOME/work
 

@@ -5,11 +5,21 @@ set -euo pipefail
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 OC_CONFIG_DIR="$CONFIG_HOME/opencode"
 OC_DATA_DIR="$DATA_HOME/opencode"
 SEED_DIR="${OPENCODE_SEED_DIR:-/opt/opencode}"
 
 mkdir -p "$OC_CONFIG_DIR" "$OC_DATA_DIR"
+
+# opencode creates its own dir under the XDG state home. The image ships that
+# path dev-owned; this only matters if a parent came from somewhere else (an
+# older image, a custom mount) and is unwritable — say so instead of dying on
+# an EACCES stack trace.
+if ! mkdir -p "$STATE_HOME" 2>/dev/null; then
+  echo "[opencode-terminal] cannot create $STATE_HOME (owned by $(stat -c '%U:%G' "$(dirname "$STATE_HOME")" 2>/dev/null || echo unknown))." >&2
+  echo "[opencode-terminal] pull a newer image, or set XDG_STATE_HOME to a writable path." >&2
+fi
 
 # ─── first-run seeding ───
 # Only ever creates missing files, so a config the user edited is never touched.
