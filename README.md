@@ -84,7 +84,8 @@ Per-agent system prompts go in `config/.config/opencode/opencode.jsonc`, which i
 | `OPENCODE_SYSTEM_PROMPT` | Literal text appended to the system prompt |
 | `OPENCODE_SYSTEM_PROMPT_FILE` | Readable path appended to the system prompt |
 | `OPENCODE_DEFAULT_MODEL` | Model written into the config **only** when it is seeded (default `zai/glm-5.3`) |
-| `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` |
+| `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` / `cli.json` / bundled plugins |
+| `OPENCODE_SKIP_PLUGINS=1` | Do not register the bundled plugins for this run |
 | `OPENCODE_CONFIG_CONTENT` | Your own inline JSON config; its keys win over the ones above |
 | `OPENCODE_TERMINAL_DEBUG=1` | Print the assembled inline config to stderr |
 
@@ -98,9 +99,44 @@ The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer
 |---|---|
 | `~/.config/opencode/opencode.jsonc` | Config: model, agents, instructions |
 | `~/.config/opencode/AGENTS.md` | Global system prompt |
-| `~/.config/opencode/tui.json` | TUI-only settings (theme, cursor, mouse) |
+| `~/.config/opencode/cli.json` | TUI settings: `session.thinking`, `session.verbosity`, theme, keybinds |
+| `~/.config/opencode/plugin/` | Bundled plugins, seeded once and yours to edit |
 | `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
 | `~/.local/share/opencode/auth.json` | Legacy credential file, if an older version wrote one |
+
+## bundled plugins
+
+Seeded into `~/.config/opencode/plugin/` on first run and registered by absolute
+path through the inline config, so they load without you editing `opencode.jsonc`.
+They are ordinary files in the mounted config dir: edit them, or delete one to
+turn it off permanently.
+
+| Plugin | Does |
+|---|---|
+| `retry-longer.ts` | Stretches the gaps between opencode's provider retries |
+
+opencode's retry schedule is hardcoded — 10 attempts, 2s/4s/8s then 10s each,
+about 84 seconds before it gives up. The attempt count cannot be changed from a
+plugin (schedule exhaustion returns before the hook runs), but the delay can.
+At its defaults the plugin turns those same 10 attempts into roughly 19 minutes
+of unattended retrying, which is what you want when a provider answers
+"model busy" under load. Ctrl-C still cancels at any point.
+
+| Variable | Effect |
+|---|---|
+| `OPENCODE_RETRY_DELAY_MS` | Base delay per attempt (default `60000`) |
+| `OPENCODE_RETRY_MAX_MS` | Ceiling once the delay ramps (default `120000`) |
+| `OPENCODE_RETRY_PROVIDERS` | Comma-separated provider ids to limit it to; unset means all |
+
+Turn it off for one run with `OPENCODE_SKIP_PLUGINS=1`, or for good with
+`rm ~/.config/opencode/plugin/retry-longer.ts` in the mounted config dir.
+
+### expanded thinking
+
+`cli.json` is seeded with `session.thinking: "show"` so model reasoning renders
+expanded instead of collapsed to a one-line summary. The in-TUI toggle
+(`ctrl+p` → "Expand thinking") writes to this same file. Add
+`"verbosity": "high"` next to it to also open exploration and instruction groups.
 
 ## build locally
 
