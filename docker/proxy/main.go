@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -643,6 +644,17 @@ func (p *proxy) giveUp(w http.ResponseWriter, resp *http.Response, err error, co
 }
 
 func main() {
+	// the same binary is installed as `oc-retry` for the /retry command
+	if filepath.Base(os.Args[0]) == "oc-retry" || (len(os.Args) > 1 && os.Args[1] == "policy") {
+		args := os.Args[1:]
+		if len(args) > 0 && args[0] == "policy" {
+			args = args[1:]
+		}
+		if runPolicyCLI(args) {
+			return
+		}
+	}
+
 	log.SetFlags(0)
 	log.SetPrefix("[oc-retry-proxy] ")
 
@@ -691,4 +703,161 @@ func main() {
 	if err := srv.Serve(ln); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// ──────────────── policy cli ────────────────
+//
+// Invoked as `oc-retry` from the seeded /retry command. opencode expands
+// !`oc-retry ...` in a command template by running it and substituting the
+// output, so whatever this prints is what the user reads.
+
+const usage = "usage: /retry [provider] <attempts> [seconds-between] [deadline]   e.g. /retry 400 60 6h, /retry deepinfra 500, /retry off"
+
+func policyPath() string {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		base = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	return filepath.Join(base, "opencode", "retry.json")
+}
+
+func readPolicyFile(path string) map[string]any {
+	doc := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &doc)
+	}
+	if _, ok := doc["default"]; !ok {
+		doc["default"] = map[string]any{}
+	}
+	return doc
+}
+
+func describe(doc map[string]any) string {
+	def, _ := doc["default"].(map[string]any)
+	get := func(k string, fallback any) any {
+		if v, ok := def[k]; ok {
+			return v
+		}
+		return fallback
+	}
+	out := fmt.Sprintf("retry policy: %v attempts, up to %s between tries, giving up after %v",
+		get("max", 200), secs(get("cap", 60000)), get("deadline", "3h"))
+	if provs, ok := doc["providers"].(map[string]any); ok && len(provs) > 0 {
+		names := make([]string, 0, len(provs))
+		for name := range provs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			p, _ := provs[name].(map[string]any)
+			out += "\n  " + name + ": " + summarize(p)
+		}
+	}
+	return out
+}
+
+// secs renders a millisecond value the way a person would say it
+func secs(v any) string {
+	switch n := v.(type) {
+	case int:
+		return (time.Duration(n) * time.Millisecond).String()
+	case float64:
+		return (time.Duration(n) * time.Millisecond).String()
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func summarize(p map[string]any) string {
+	parts := []string{}
+	if v, ok := p["max"]; ok {
+		parts = append(parts, fmt.Sprintf("%v attempts", v))
+	}
+	if v, ok := p["cap"]; ok {
+		parts = append(parts, "up to "+secs(v)+" between tries")
+	}
+	if v, ok := p["deadline"]; ok {
+		parts = append(parts, fmt.Sprintf("giving up after %v", v))
+	}
+	if len(parts) == 0 {
+		return "no override"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// runPolicyCLI returns false when the arguments are not a policy command, so
+// main can carry on and start the proxy.
+func runPolicyCLI(args []string) bool {
+	path := policyPath()
+	doc := readPolicyFile(path)
+	def, _ := doc["default"].(map[string]any)
+
+	if len(args) == 0 {
+		fmt.Println(describe(doc))
+		return true
+	}
+
+	target := def
+	rest := args
+	// "oc-retry deepinfra 400" scopes the change to one provider. A bare word on
+	// its own is a typo, not a provider -- reporting it beats silently writing an
+	// empty override into the file.
+	if _, err := strconv.Atoi(args[0]); err != nil && args[0] != "off" && args[0] != "default" {
+		provs, _ := doc["providers"].(map[string]any)
+		if len(args) == 1 {
+			if p, ok := provs[args[0]].(map[string]any); ok {
+				fmt.Printf("%s: %s\n", args[0], summarize(p))
+				return true
+			}
+			fmt.Printf("no retry override for %q.\n%s\n%s\n", args[0], usage, describe(doc))
+			return true
+		}
+		if provs == nil {
+			provs = map[string]any{}
+			doc["providers"] = provs
+		}
+		p, _ := provs[args[0]].(map[string]any)
+		if p == nil {
+			p = map[string]any{}
+			provs[args[0]] = p
+		}
+		target = p
+		rest = args[1:]
+	}
+
+	switch {
+	case rest[0] == "off" || rest[0] == "default":
+		// opencode's own behaviour, near enough: five tries, 30s ceiling
+		target["max"] = 5
+		target["cap"] = 30000
+		target["deadline"] = "5m"
+	default:
+		n, err := strconv.Atoi(rest[0])
+		if err != nil || n <= 0 {
+			fmt.Printf("%s\n%s\n", usage, describe(doc))
+			return true
+		}
+		target["max"] = n
+		if len(rest) > 1 {
+			if secs, err := strconv.Atoi(rest[1]); err == nil && secs > 0 {
+				target["cap"] = secs * 1000
+			}
+		}
+		if len(rest) > 2 {
+			if _, err := time.ParseDuration(rest[2]); err == nil {
+				target["deadline"] = rest[2]
+			}
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Printf("could not write %s: %v\n", path, err)
+		return true
+	}
+	b, _ := json.MarshalIndent(doc, "", "  ")
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		fmt.Printf("could not write %s: %v\n", path, err)
+		return true
+	}
+	fmt.Printf("%s (applies to the next request, no restart)\n", describe(doc))
+	return true
 }

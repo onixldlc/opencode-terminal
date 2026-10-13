@@ -107,6 +107,7 @@ The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer
 | `~/.config/opencode/cli.json` | TUI settings: `session.thinking`, `session.verbosity`, theme, keybinds |
 | `~/.config/opencode/plugins/` | Local plugins, auto-loaded by opencode (incl. `retry.ts`) |
 | `~/.config/opencode/retry.json` | Retry policy, read per request |
+| `~/.config/opencode/command/retry.md` | The `/retry` command |
 | `~/.config/opencode-terminal/ca.pem` | The proxy's CA, generated on first run |
 | `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
 | `~/.local/share/opencode/auth.json` | Legacy credential file, if an older version wrote one |
@@ -160,8 +161,23 @@ same thing as JSON, and the proxy logs every attempt to
 
 ### changing the policy
 
-`~/.config/opencode/retry.json`, read per request — edits apply to the session
-already running:
+From inside the TUI, `/retry`:
+
+```
+/retry                     show the current policy
+/retry 400                 400 attempts
+/retry 400 60 6h           400 attempts, 60s ceiling, 6h deadline
+/retry deepinfra 500       just that provider
+/retry off                 back to roughly stock opencode (5 attempts)
+```
+
+It takes effect on the next request -- no restart. The command is a seeded
+markdown file at `~/.config/opencode/command/retry.md` whose template runs
+`oc-retry` and shows the result, so it does cost one (cheap) model turn to echo
+the answer back.
+
+Or edit `~/.config/opencode/retry.json` directly — it is read per request, so
+edits apply to the session already running:
 
 ```json
 {

@@ -50,6 +50,9 @@ RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 # retries are handled by the proxy, not by opencode: its own schedule (5 attempts,
 # ~1 min) is hardcoded in the bun executable with no config key and no plugin hook.
 COPY --from=proxy-build /out/oc-retry-proxy /usr/local/bin/oc-retry-proxy
+# same binary, second name: as `oc-retry` it reads and writes the policy file,
+# which is what the seeded /retry command calls
+RUN ln -s oc-retry-proxy /usr/local/bin/oc-retry
 
 # seeds copied into the mounted config dir on first run by the entrypoint
 COPY docker/opencode.default.jsonc /opt/opencode/opencode.default.jsonc
@@ -57,6 +60,7 @@ COPY docker/AGENTS.default.md /opt/opencode/AGENTS.default.md
 COPY docker/cli.default.json /opt/opencode/cli.default.json
 COPY docker/retry.default.json /opt/opencode/retry.default.json
 COPY docker/plugins/retry.ts /opt/opencode/plugins/retry.ts
+COPY docker/commands/retry.md /opt/opencode/commands/retry.md
 COPY docker/entrypoint.sh /usr/local/bin/opencode-entrypoint.sh
 COPY docker/verify.sh /usr/local/bin/opencode-verify.sh
 RUN chmod 755 /usr/local/bin/opencode-entrypoint.sh /usr/local/bin/opencode-verify.sh

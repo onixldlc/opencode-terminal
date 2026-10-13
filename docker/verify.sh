@@ -49,6 +49,11 @@ else
   bad "proxy did not start: $(tail -1 "$proxy_dir/log" 2>/dev/null)"
 fi
 [[ -s "$proxy_dir/ca.pem" ]] && ok "generated its own CA" || bad "no CA generated"
+if HOME="$proxy_dir" oc-retry 42 >/dev/null 2>&1 && grep -q '"max": 42' "$proxy_dir/.config/opencode/retry.json" 2>/dev/null; then
+  ok "oc-retry writes the policy file (this is what /retry runs)"
+else
+  bad "oc-retry did not update the policy file"
+fi
 status="$(curl -s --max-time 5 http://127.0.0.1:8799/__oc/status || true)"
 if grep -q '"retrying"' <<<"$status"; then
   ok "status endpoint answers (the TUI plugin polls this)"
@@ -79,7 +84,7 @@ rm -rf "$proxy_dir"
 echo "== seeds =="
 for f in /opt/opencode/opencode.default.jsonc /opt/opencode/AGENTS.default.md \
          /opt/opencode/cli.default.json /opt/opencode/retry.default.json \
-         /opt/opencode/plugins/retry.ts; do
+         /opt/opencode/plugins/retry.ts /opt/opencode/commands/retry.md; do
   [[ -r "$f" ]] && ok "$f" || bad "$f missing"
 done
 
@@ -119,6 +124,7 @@ fi
 [[ -r "$probe/.config/opencode/cli.json" ]] && ok "seeded cli.json" || bad "cli.json not seeded"
 [[ -r "$probe/.config/opencode/retry.json" ]] && ok "seeded retry.json" || bad "retry.json not seeded"
 [[ -r "$probe/.config/opencode/plugins/retry.ts" ]] && ok "seeded plugins/retry.ts" || bad "plugins/retry.ts not seeded"
+[[ -r "$probe/.config/opencode/command/retry.md" ]] && ok "seeded command/retry.md" || bad "command/retry.md not seeded"
 
 # Everything below runs against a throwaway HOME so the check never writes into
 # a mounted config dir.
@@ -144,6 +150,7 @@ fi
 [[ -r "$probe/.config/opencode/cli.json" ]] && ok "seeded cli.json" || bad "cli.json not seeded"
 [[ -r "$probe/.config/opencode/retry.json" ]] && ok "seeded retry.json" || bad "retry.json not seeded"
 [[ -r "$probe/.config/opencode/plugins/retry.ts" ]] && ok "seeded plugins/retry.ts" || bad "plugins/retry.ts not seeded"
+[[ -r "$probe/.config/opencode/command/retry.md" ]] && ok "seeded command/retry.md" || bad "command/retry.md not seeded"
 
 echo "== glm providers =="
 # Every GLM provider on models.dev authenticates via ZHIPU_API_KEY, so a dummy

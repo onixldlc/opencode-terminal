@@ -57,6 +57,13 @@ if [[ "${OPENCODE_SKIP_SEED:-0}" != "1" ]]; then
     cp "$SEED_DIR/plugins/retry.ts" "$OC_CONFIG_DIR/plugins/retry.ts"
     echo "[opencode-terminal] seeded $OC_CONFIG_DIR/plugins/retry.ts" >&2
   fi
+  # command/*.md is opencode's own slash-command directory; /retry runs the
+  # shell snippet in the template and shows the result
+  if [[ ! -e "$OC_CONFIG_DIR/command/retry.md" ]]; then
+    mkdir -p "$OC_CONFIG_DIR/command"
+    cp "$SEED_DIR/commands/retry.md" "$OC_CONFIG_DIR/command/retry.md"
+    echo "[opencode-terminal] seeded $OC_CONFIG_DIR/command/retry.md" >&2
+  fi
 fi
 
 # ─── retry proxy ───
