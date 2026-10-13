@@ -30,7 +30,7 @@ fi
 
 echo "== seeds =="
 for f in /opt/opencode/opencode.default.jsonc /opt/opencode/AGENTS.default.md \
-         /opt/opencode/cli.default.json /opt/opencode/plugins/retry-longer.ts; do
+         /opt/opencode/cli.default.json; do
   [[ -r "$f" ]] && ok "$f" || bad "$f missing"
 done
 
@@ -69,32 +69,28 @@ fi
 [[ -r "$probe/.config/opencode/AGENTS.md" ]] && ok "seeded AGENTS.md" || bad "AGENTS.md not seeded"
 [[ -r "$probe/.config/opencode/cli.json" ]] && ok "seeded cli.json" || bad "cli.json not seeded"
 
-echo "== bundled plugins =="
-if [[ -r "$probe/.config/opencode/plugin/retry-longer.ts" ]]; then
-  ok "seeded plugin/retry-longer.ts"
-else
-  bad "retry-longer.ts not seeded into the config dir"
-fi
+# Everything below runs against a throwaway HOME so the check never writes into
+# a mounted config dir.
+probe="$(mktemp -d)"
+export HOME="$probe"
+mkdir -p "$probe/work"
+cd "$probe/work" || exit 1
 
-# The plugin is only active if the entrypoint registers it by absolute path in
-# the inline config, so assert the wiring rather than just the file.
-registered="$(
-  HOME="$probe" /usr/local/bin/opencode-entrypoint.sh --version 2>/dev/null >/dev/null
-  HOME="$probe" OPENCODE_TERMINAL_DEBUG=1 /usr/local/bin/opencode-entrypoint.sh --version 2>&1 >/dev/null |
-    sed -n 's/^\[opencode-terminal\] inline config: //p'
-)"
-if grep -q 'retry-longer.ts' <<<"$registered"; then
-  ok "plugin registered in inline config"
+echo "== entrypoint seeding =="
+OPENCODE_DEFAULT_MODEL="zai/glm-5.3" \
+  /usr/local/bin/opencode-entrypoint.sh --version >/dev/null 2>&1
+if [[ -r "$probe/.config/opencode/opencode.jsonc" ]]; then
+  ok "seeded opencode.jsonc"
+  if grep -q '"model": "zai/glm-5.3"' "$probe/.config/opencode/opencode.jsonc"; then
+    ok "__MODEL__ rendered"
+  else
+    bad "__MODEL__ placeholder not rendered"
+  fi
 else
-  bad "plugin not registered; inline config was: ${registered:-<empty>}"
+  bad "entrypoint did not seed opencode.jsonc"
 fi
-
-if HOME="$probe" OPENCODE_SKIP_PLUGINS=1 OPENCODE_TERMINAL_DEBUG=1 \
-     /usr/local/bin/opencode-entrypoint.sh --version 2>&1 >/dev/null | grep -q 'retry-longer.ts'; then
-  bad "OPENCODE_SKIP_PLUGINS=1 did not disable the bundled plugins"
-else
-  ok "OPENCODE_SKIP_PLUGINS=1 disables bundled plugins"
-fi
+[[ -r "$probe/.config/opencode/AGENTS.md" ]] && ok "seeded AGENTS.md" || bad "AGENTS.md not seeded"
+[[ -r "$probe/.config/opencode/cli.json" ]] && ok "seeded cli.json" || bad "cli.json not seeded"
 
 echo "== glm providers =="
 # Every GLM provider on models.dev authenticates via ZHIPU_API_KEY, so a dummy

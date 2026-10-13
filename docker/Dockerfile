@@ -43,7 +43,6 @@ RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 COPY docker/opencode.default.jsonc /opt/opencode/opencode.default.jsonc
 COPY docker/AGENTS.default.md /opt/opencode/AGENTS.default.md
 COPY docker/cli.default.json /opt/opencode/cli.default.json
-COPY docker/plugins/ /opt/opencode/plugins/
 COPY docker/entrypoint.sh /usr/local/bin/opencode-entrypoint.sh
 COPY docker/verify.sh /usr/local/bin/opencode-verify.sh
 RUN chmod 755 /usr/local/bin/opencode-entrypoint.sh /usr/local/bin/opencode-verify.sh

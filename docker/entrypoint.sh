@@ -44,31 +44,6 @@ if [[ "${OPENCODE_SKIP_SEED:-0}" != "1" ]]; then
   fi
 fi
 
-# ─── bundled plugins ───
-# Seeded into the mounted config dir rather than loaded from /opt, so they are
-# editable and deletable like any other config. Deleting one disables it for
-# good; OPENCODE_SKIP_PLUGINS=1 disables all of them for a single run.
-PLUGIN_SEED_DIR="$SEED_DIR/plugins"
-OC_PLUGIN_DIR="$OC_CONFIG_DIR/plugin"
-PLUGIN_LIST=""
-if [[ "${OPENCODE_SKIP_PLUGINS:-0}" != "1" ]]; then
-  if [[ "${OPENCODE_SKIP_SEED:-0}" != "1" && -d "$PLUGIN_SEED_DIR" ]]; then
-    mkdir -p "$OC_PLUGIN_DIR"
-    for src in "$PLUGIN_SEED_DIR"/*.ts; do
-      [[ -e "$src" ]] || continue
-      dest="$OC_PLUGIN_DIR/$(basename "$src")"
-      if [[ ! -e "$dest" ]]; then
-        cp "$src" "$dest"
-        echo "[opencode-terminal] seeded $dest" >&2
-      fi
-    done
-  fi
-  for f in "$OC_PLUGIN_DIR"/*.ts; do
-    [[ -e "$f" ]] || continue
-    PLUGIN_LIST="${PLUGIN_LIST:+$PLUGIN_LIST:}$f"
-  done
-fi
-export PLUGIN_LIST
 
 # ─── env knobs → inline config ───
 # OPENCODE_CONFIG_CONTENT is opencode's highest-precedence source and merges
@@ -111,12 +86,6 @@ if prompt_file:
 if instructions:
     override["instructions"] = instructions
 
-# Plugins are registered by absolute path. The merge appends arrays, so a
-# caller's own plugin list keeps working alongside the bundled ones.
-plugins = [entry for entry in os.environ.get("PLUGIN_LIST", "").split(":") if entry]
-if plugins:
-    override["plugin"] = plugins
-
 # A caller-supplied inline config stays authoritative: its keys land last.
 existing = os.environ.get("OPENCODE_CONFIG_CONTENT", "").strip()
 if existing:
@@ -127,12 +96,9 @@ if existing:
     if not isinstance(parsed, dict):
         raise SystemExit("OPENCODE_CONFIG_CONTENT must be a JSON object")
     merged_instructions = override.get("instructions", []) + parsed.pop("instructions", [])
-    merged_plugins = override.get("plugin", []) + parsed.pop("plugin", [])
     override.update(parsed)
     if merged_instructions:
         override["instructions"] = merged_instructions
-    if merged_plugins:
-        override["plugin"] = merged_plugins
 
 print(json.dumps(override) if override else "")
 PY

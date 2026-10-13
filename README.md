@@ -84,8 +84,7 @@ Per-agent system prompts go in `config/.config/opencode/opencode.jsonc`, which i
 | `OPENCODE_SYSTEM_PROMPT` | Literal text appended to the system prompt |
 | `OPENCODE_SYSTEM_PROMPT_FILE` | Readable path appended to the system prompt |
 | `OPENCODE_DEFAULT_MODEL` | Model written into the config **only** when it is seeded (default `zai/glm-5.3`) |
-| `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` / `cli.json` / bundled plugins |
-| `OPENCODE_SKIP_PLUGINS=1` | Do not register the bundled plugins for this run |
+| `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` / `cli.json` |
 | `OPENCODE_CONFIG_CONTENT` | Your own inline JSON config; its keys win over the ones above |
 | `OPENCODE_TERMINAL_DEBUG=1` | Print the assembled inline config to stderr |
 
@@ -100,43 +99,24 @@ The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer
 | `~/.config/opencode/opencode.jsonc` | Config: model, agents, instructions |
 | `~/.config/opencode/AGENTS.md` | Global system prompt |
 | `~/.config/opencode/cli.json` | TUI settings: `session.thinking`, `session.verbosity`, theme, keybinds |
-| `~/.config/opencode/plugin/` | Bundled plugins, seeded once and yours to edit |
+| `~/.config/opencode/plugins/` | Local plugins, auto-loaded by opencode |
 | `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
 | `~/.local/share/opencode/auth.json` | Legacy credential file, if an older version wrote one |
 
-## bundled plugins
+## expanded thinking
 
-Seeded into `~/.config/opencode/plugin/` on first run and registered by absolute
-path through the inline config, so they load without you editing `opencode.jsonc`.
-They are ordinary files in the mounted config dir: edit them, or delete one to
-turn it off permanently.
+`cli.json` is the TUI's own config, separate from `opencode.jsonc`. It is seeded
+with `session.thinking: "show"` so model reasoning renders expanded instead of
+collapsed to a one-line summary. The in-TUI toggle (`ctrl+p` -> "Expand
+thinking") rewrites this same file. Add `"verbosity": "high"` next to it to also
+open exploration and instruction groups.
 
-| Plugin | Does |
-|---|---|
-| `retry-longer.ts` | Stretches the gaps between opencode's provider retries |
-
-opencode's retry schedule is hardcoded — 10 attempts, 2s/4s/8s then 10s each,
-about 84 seconds before it gives up. The attempt count cannot be changed from a
-plugin (schedule exhaustion returns before the hook runs), but the delay can.
-At its defaults the plugin turns those same 10 attempts into roughly 19 minutes
-of unattended retrying, which is what you want when a provider answers
-"model busy" under load. Ctrl-C still cancels at any point.
-
-| Variable | Effect |
-|---|---|
-| `OPENCODE_RETRY_DELAY_MS` | Base delay per attempt (default `60000`) |
-| `OPENCODE_RETRY_MAX_MS` | Ceiling once the delay ramps (default `120000`) |
-| `OPENCODE_RETRY_PROVIDERS` | Comma-separated provider ids to limit it to; unset means all |
-
-Turn it off for one run with `OPENCODE_SKIP_PLUGINS=1`, or for good with
-`rm ~/.config/opencode/plugin/retry-longer.ts` in the mounted config dir.
-
-### expanded thinking
-
-`cli.json` is seeded with `session.thinking: "show"` so model reasoning renders
-expanded instead of collapsed to a one-line summary. The in-TUI toggle
-(`ctrl+p` → "Expand thinking") writes to this same file. Add
-`"verbosity": "high"` next to it to also open exploration and instruction groups.
+On plugins: opencode 1.19 loads local plugins from `~/.config/opencode/plugins/`
+automatically, and the `plugin` array in `opencode.jsonc` is for **npm packages
+only** -- an absolute path there is treated as a package name and fails to
+install. Its hook set (`@opencode-ai/plugin@1.19.0`) has no retry hook, so the
+retry schedule (10 attempts over ~84s, hardcoded) cannot be changed by a plugin
+on this version. That arrived in the v2 line (`@opencode/cli@2.x`).
 
 ## build locally
 
