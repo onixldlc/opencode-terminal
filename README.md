@@ -135,6 +135,29 @@ A provider's own `retry-after` header is honoured when it sends one. Requests
 that would be slow to answer are held open as an event stream with SSE keepalive
 comments, so a long wait doesn't trip opencode's 5-minute header timeout.
 
+### seeing it happen
+
+A retry that lasts twenty minutes would otherwise look exactly like the model
+thinking hard, which is how you end up typing "continue" into a session that was
+never stuck. The plugin polls the proxy and raises a toast:
+
+```
+Provider busy
+api.deepinfra.com returned 503. Retry 7/200, next in 60s (waiting 5m 12s).
+Still working -- no need to send anything.
+```
+
+repeated once a minute while it lasts, and closed out either way:
+
+```
+api.deepinfra.com recovered after 7 retries over 6m 2s.          (success)
+api.deepinfra.com never recovered -- gave up after 200 retries over 3h.  (error)
+```
+
+`curl http://127.0.0.1:8787/__oc/status` from inside the container gives the
+same thing as JSON, and the proxy logs every attempt to
+`~/.config/opencode-terminal/proxy.log`.
+
 ### changing the policy
 
 `~/.config/opencode/retry.json`, read per request — edits apply to the session

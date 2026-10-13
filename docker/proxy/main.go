@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -39,6 +40,8 @@ import (
 )
 
 const (
+	// where the TUI plugin reads retry state from
+	statusPath = "/__oc/status"
 	// a request body larger than this is forwarded without buffering, which
 	// means it cannot be replayed and so cannot be retried
 	maxReplayBody = 32 << 20
@@ -278,8 +281,95 @@ var hopByHop = []string{
 	"Te", "Trailer", "Transfer-Encoding", "Upgrade",
 }
 
+// retryState is what the TUI plugin polls. Without it a long retry is
+// indistinguishable from the model simply thinking for a while.
+type retryState struct {
+	Host    string `json:"host"`
+	Attempt int    `json:"attempt"`
+	Max     int    `json:"max"`
+	Reason  string `json:"reason"`
+	NextIn  int64  `json:"next_in_ms"`
+	Elapsed int64  `json:"elapsed_ms"`
+}
+
+// outcome is how an episode ended, kept briefly so the plugin can tell the
+// difference between "the provider came back" and "we gave up".
+type outcome struct {
+	Host    string `json:"host"`
+	Attempt int    `json:"attempt"`
+	Elapsed int64  `json:"elapsed_ms"`
+	OK      bool   `json:"ok"`
+	AgeMs   int64  `json:"age_ms"`
+}
+
+type tracker struct {
+	mu   sync.Mutex
+	next int64
+	live map[int64]retryState
+	last *outcome
+	at   time.Time
+}
+
+// finish records how an episode ended. Only episodes that actually retried are
+// worth reporting -- a request that succeeded first time never had a state.
+func (t *tracker) finish(id int64, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s, had := t.live[id]
+	if !had {
+		return
+	}
+	delete(t.live, id)
+	t.last = &outcome{Host: s.Host, Attempt: s.Attempt, Elapsed: s.Elapsed, OK: ok}
+	t.at = time.Now()
+}
+
+func (t *tracker) outcome() *outcome {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.last == nil || time.Since(t.at) > time.Minute {
+		return nil
+	}
+	o := *t.last
+	o.AgeMs = time.Since(t.at).Milliseconds()
+	return &o
+}
+
+func (t *tracker) set(id int64, s retryState) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.live == nil {
+		t.live = map[int64]retryState{}
+	}
+	t.live[id] = s
+}
+
+func (t *tracker) clear(id int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.live, id)
+}
+
+func (t *tracker) snapshot() []retryState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]retryState, 0, len(t.live))
+	for _, s := range t.live {
+		out = append(out, s)
+	}
+	return out
+}
+
+func (t *tracker) id() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.next++
+	return t.next
+}
+
 type proxy struct {
 	ca        *ca
+	retries   tracker
 	transport *http.Transport
 	defaults  policy
 	// opencode aborts a request whose headers take longer than this (its
@@ -309,6 +399,15 @@ func (l *oneConn) Addr() net.Addr { return l.c.LocalAddr() }
 func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
 		p.mitm(w, r)
+		return
+	}
+	// a request addressed to the proxy itself rather than through it
+	if r.URL.Host == "" && r.URL.Path == statusPath {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"retrying": p.retries.snapshot(),
+			"last":     p.retries.outcome(),
+		})
 		return
 	}
 	p.forward(w, r, "http")
@@ -396,6 +495,8 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, scheme string) {
 	}
 
 	start := time.Now()
+	id := p.retries.id()
+	defer p.retries.clear(id)
 	committed := false
 	attempts := pol.max
 	if !replayable {
@@ -419,9 +520,11 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, scheme string) {
 		case err != nil && r.Context().Err() != nil:
 			return // the client went away, nothing to answer
 		case err == nil && !retryableStatus(resp.StatusCode):
+			p.retries.finish(id, true)
 			p.passThrough(w, resp, committed)
 			return
 		case attempt >= attempts:
+			p.retries.finish(id, false)
 			p.giveUp(w, resp, err, committed, attempt, time.Since(start))
 			return
 		}
@@ -433,6 +536,7 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, scheme string) {
 		}
 		wait := pol.wait(attempt, ra)
 		if time.Since(start)+wait > pol.deadline {
+			p.retries.finish(id, false)
 			p.giveUp(w, resp, err, committed, attempt, time.Since(start))
 			return
 		}
@@ -441,6 +545,14 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, scheme string) {
 			reason = strconv.Itoa(resp.StatusCode)
 		}
 		log.Printf("%s %s: %s, attempt %d/%d, waiting %s", r.Method, target.Host, reason, attempt, attempts, wait.Round(time.Second))
+		p.retries.set(id, retryState{
+			Host:    target.Host,
+			Attempt: attempt,
+			Max:     attempts,
+			Reason:  reason,
+			NextIn:  wait.Milliseconds(),
+			Elapsed: time.Since(start).Milliseconds(),
+		})
 
 		// once the wait would outlast opencode's header timeout, answer now and
 		// keep retrying inside the stream. SSE comments are ignored by the

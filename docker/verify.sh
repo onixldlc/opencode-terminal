@@ -49,6 +49,12 @@ else
   bad "proxy did not start: $(tail -1 "$proxy_dir/log" 2>/dev/null)"
 fi
 [[ -s "$proxy_dir/ca.pem" ]] && ok "generated its own CA" || bad "no CA generated"
+status="$(curl -s --max-time 5 http://127.0.0.1:8799/__oc/status || true)"
+if grep -q '"retrying"' <<<"$status"; then
+  ok "status endpoint answers (the TUI plugin polls this)"
+else
+  bad "status endpoint did not answer: $status"
+fi
 [[ "$(stat -c '%a' "$proxy_dir/ca.key" 2>/dev/null)" == "600" ]] && ok "CA key is 0600" || bad "CA key permissions are not 0600"
 
 # the trust-store install is what makes bun accept the intercepted connection:
