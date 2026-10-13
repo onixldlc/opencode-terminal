@@ -644,8 +644,10 @@ func (p *proxy) giveUp(w http.ResponseWriter, resp *http.Response, err error, co
 }
 
 func main() {
-	// the same binary is installed as `oc-retry` for the /retry command
-	if filepath.Base(os.Args[0]) == "oc-retry" || (len(os.Args) > 1 && os.Args[1] == "policy") {
+	// the same binary is installed under short names for TUI shell mode, where
+	// `!retry 400` changes the policy without costing a model turn
+	invoked := filepath.Base(os.Args[0])
+	if invoked == "oc-retry" || invoked == "retry" || (len(os.Args) > 1 && os.Args[1] == "policy") {
 		args := os.Args[1:]
 		if len(args) > 0 && args[0] == "policy" {
 			args = args[1:]

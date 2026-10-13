@@ -57,13 +57,19 @@ if [[ "${OPENCODE_SKIP_SEED:-0}" != "1" ]]; then
     cp "$SEED_DIR/plugins/retry.ts" "$OC_CONFIG_DIR/plugins/retry.ts"
     echo "[opencode-terminal] seeded $OC_CONFIG_DIR/plugins/retry.ts" >&2
   fi
-  # command/*.md is opencode's own slash-command directory; /retry runs the
-  # shell snippet in the template and shows the result
-  if [[ ! -e "$OC_CONFIG_DIR/command/retry.md" ]]; then
-    mkdir -p "$OC_CONFIG_DIR/command"
-    cp "$SEED_DIR/commands/retry.md" "$OC_CONFIG_DIR/command/retry.md"
-    echo "[opencode-terminal] seeded $OC_CONFIG_DIR/command/retry.md" >&2
-  fi
+fi
+
+# v1.2.1 seeded a /retry command here. It worked, but a slash command is a prompt
+# template: running it submitted a turn and the model answered it, which is not
+# what changing a setting should do. Shell mode (! on an empty prompt) runs
+# `!retry 400` with no prompt at all, so the command file is removed -- but only
+# when it is still byte-for-byte the one that was shipped.
+STALE_CMD="$OC_CONFIG_DIR/command/retry.md"
+if [[ -f "$STALE_CMD" ]] && grep -q 'oc-retry \$ARGUMENTS' "$STALE_CMD" \
+   && [[ "$(wc -c <"$STALE_CMD")" -lt 300 ]]; then
+  rm -f "$STALE_CMD"
+  rmdir "$OC_CONFIG_DIR/command" 2>/dev/null || true
+  echo "[opencode-terminal] removed the old /retry command; use shell mode instead: press ! then 'retry 400'" >&2
 fi
 
 # ─── retry proxy ───

@@ -107,7 +107,6 @@ The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer
 | `~/.config/opencode/cli.json` | TUI settings: `session.thinking`, `session.verbosity`, theme, keybinds |
 | `~/.config/opencode/plugins/` | Local plugins, auto-loaded by opencode (incl. `retry.ts`) |
 | `~/.config/opencode/retry.json` | Retry policy, read per request |
-| `~/.config/opencode/command/retry.md` | The `/retry` command |
 | `~/.config/opencode-terminal/ca.pem` | The proxy's CA, generated on first run |
 | `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
 | `~/.local/share/opencode/auth.json` | Legacy credential file, if an older version wrote one |
@@ -161,20 +160,21 @@ same thing as JSON, and the proxy logs every attempt to
 
 ### changing the policy
 
-From inside the TUI, `/retry`:
+From inside the TUI, press **`!`** on an empty prompt to enter shell mode, then:
 
 ```
-/retry                     show the current policy
-/retry 400                 400 attempts
-/retry 400 60 6h           400 attempts, 60s ceiling, 6h deadline
-/retry deepinfra 500       just that provider
-/retry off                 back to roughly stock opencode (5 attempts)
+!retry                     show the current policy
+!retry 400                 400 attempts
+!retry 400 60 6h           400 attempts, 60s ceiling, 6h deadline
+!retry deepinfra 500       just that provider
+!retry off                 back to roughly stock opencode (5 attempts)
 ```
 
-It takes effect on the next request -- no restart. The command is a seeded
-markdown file at `~/.config/opencode/command/retry.md` whose template runs
-`oc-retry` and shows the result, so it does cost one (cheap) model turn to echo
-the answer back.
+Shell mode runs the command and prints the result without sending anything to
+the model, so changing the policy costs nothing. (A `/command` would not: those
+are prompt templates, and the expanded text is submitted as a turn.) It takes
+effect on the next request -- no restart. `oc-retry` is the same command under a
+longer name.
 
 Or edit `~/.config/opencode/retry.json` directly — it is read per request, so
 edits apply to the session already running:
