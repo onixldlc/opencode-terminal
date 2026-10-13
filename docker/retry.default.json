@@ -1,0 +1,9 @@
+{
+  "default": {
+    "max": 200,
+    "base": 2000,
+    "cap": 60000,
+    "deadline": "3h"
+  },
+  "providers": {}
+}

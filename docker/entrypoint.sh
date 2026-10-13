@@ -42,6 +42,92 @@ if [[ "${OPENCODE_SKIP_SEED:-0}" != "1" ]]; then
     cp "$SEED_DIR/cli.default.json" "$OC_CONFIG_DIR/cli.json"
     echo "[opencode-terminal] seeded $OC_CONFIG_DIR/cli.json" >&2
   fi
+
+  # retry.json drives the proxy through the seeded plugin. Both are copied, never
+  # overwritten -- edits survive an image upgrade.
+  if [[ ! -e "$OC_CONFIG_DIR/retry.json" ]]; then
+    cp "$SEED_DIR/retry.default.json" "$OC_CONFIG_DIR/retry.json"
+    echo "[opencode-terminal] seeded $OC_CONFIG_DIR/retry.json" >&2
+  fi
+  # plugins/ (plural) is auto-loaded by opencode. The `plugin` array in
+  # opencode.jsonc is for npm package names only -- a path there is treated as a
+  # package and fails to install.
+  if [[ ! -e "$OC_CONFIG_DIR/plugins/retry.ts" ]]; then
+    mkdir -p "$OC_CONFIG_DIR/plugins"
+    cp "$SEED_DIR/plugins/retry.ts" "$OC_CONFIG_DIR/plugins/retry.ts"
+    echo "[opencode-terminal] seeded $OC_CONFIG_DIR/plugins/retry.ts" >&2
+  fi
+fi
+
+# ─── retry proxy ───
+# opencode's own retry schedule is 5 attempts over about a minute, hardcoded in
+# its binary with no config key and no plugin hook. Every outbound request goes
+# through oc-retry-proxy instead, which absorbs 429s and 5xx for as long as the
+# policy says. It intercepts TLS rather than rewriting baseURLs, so it covers
+# every provider -- including ones added later -- with no per-provider config.
+#
+# The CA is generated per container into the mounted config dir on first run and
+# never leaves it. A CA baked into a published image would be a private key
+# everybody holding the image has.
+if [[ "${OC_PROXY:-on}" != "off" ]]; then
+  PROXY_DIR="$CONFIG_HOME/opencode-terminal"
+  PROXY_ADDR="${OC_PROXY_ADDR:-127.0.0.1:8787}"
+  mkdir -p "$PROXY_DIR"
+  OC_PROXY_CA_DIR="$PROXY_DIR" OC_PROXY_ADDR="$PROXY_ADDR" \
+    oc-retry-proxy >>"$PROXY_DIR/proxy.log" 2>&1 &
+
+  # wait for the listener rather than sleeping blind; a dead proxy with the env
+  # vars already exported would take every request down with it
+  for _ in $(seq 1 50); do
+    if (exec 3<>"/dev/tcp/${PROXY_ADDR%:*}/${PROXY_ADDR##*:}") 2>/dev/null; then
+      exec 3<&- 3>&-
+      break
+    fi
+    sleep 0.1
+  done
+
+  if (exec 3<>"/dev/tcp/${PROXY_ADDR%:*}/${PROXY_ADDR##*:}") 2>/dev/null; then
+    exec 3<&- 3>&-
+    # trust the proxy's CA: bun reads NODE_EXTRA_CA_CERTS, everything else in the
+    # image reads one of the bundle variables
+    cat /etc/ssl/certs/ca-certificates.crt "$PROXY_DIR/ca.pem" > "$PROXY_DIR/bundle.pem"
+
+    # bun honours NODE_EXTRA_CA_CERTS on a direct connection but ignores it for
+    # tunnelled requests, which is exactly the path every provider call takes.
+    # The system store is read either way, so the CA goes in there. This is the
+    # container's own store, thrown away with the container -- the host's is
+    # untouched, and the key was generated locally in the mounted config dir.
+    if [[ -f "$PROXY_DIR/ca.pem" ]] && sudo -n true 2>/dev/null; then
+      sudo install -m 644 "$PROXY_DIR/ca.pem" /usr/local/share/ca-certificates/oc-retry-proxy.crt
+      if sudo update-ca-certificates >/dev/null 2>&1; then
+        [[ -n "${OPENCODE_TERMINAL_DEBUG:-}" ]] && echo "[opencode-terminal] proxy CA added to the container trust store" >&2
+      else
+        echo "[opencode-terminal] could not refresh the trust store; set OC_PROXY_INSECURE=1 if provider calls fail with a certificate error." >&2
+      fi
+    fi
+
+    # last resort, opt-in only: opencode stops verifying certificates and trusts
+    # the local proxy blindly. The proxy still verifies the real provider, so the
+    # unverified hop is 127.0.0.1 -- but anything else in the container inherits
+    # this too, so it stays off unless asked for.
+    if [[ "${OC_PROXY_INSECURE:-0}" == "1" ]]; then
+      export NODE_TLS_REJECT_UNAUTHORIZED=0
+      echo "[opencode-terminal] OC_PROXY_INSECURE=1: TLS verification disabled inside the container." >&2
+    fi
+
+    export NODE_EXTRA_CA_CERTS="$PROXY_DIR/ca.pem"
+    export SSL_CERT_FILE="$PROXY_DIR/bundle.pem"
+    export CURL_CA_BUNDLE="$PROXY_DIR/bundle.pem"
+    export REQUESTS_CA_BUNDLE="$PROXY_DIR/bundle.pem"
+    export HTTPS_PROXY="http://$PROXY_ADDR" HTTP_PROXY="http://$PROXY_ADDR"
+    export https_proxy="$HTTPS_PROXY" http_proxy="$HTTP_PROXY"
+    export NO_PROXY="localhost,127.0.0.1,::1"
+    export no_proxy="$NO_PROXY"
+    [[ -n "${OPENCODE_TERMINAL_DEBUG:-}" ]] && echo "[opencode-terminal] retry proxy on $PROXY_ADDR" >&2
+  else
+    echo "[opencode-terminal] retry proxy did not start, continuing without it." >&2
+    echo "[opencode-terminal] opencode will fall back to its own 5 attempts. See $PROXY_DIR/proxy.log" >&2
+  fi
 fi
 
 

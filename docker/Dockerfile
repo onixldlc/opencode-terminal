@@ -1,5 +1,13 @@
 ARG TARGETARCH
 
+# the retry proxy is a static Go binary, built once here and copied in. no Go
+# runtime, no node_modules and no python deps end up in the final image.
+FROM docker.io/library/golang:1.23-bookworm AS proxy-build
+WORKDIR /src
+COPY docker/proxy/go.mod ./
+COPY docker/proxy/main.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/oc-retry-proxy .
+
 FROM docker.io/library/node:22-bookworm-slim
 ARG TARGETARCH
 
@@ -39,10 +47,16 @@ RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-${TARGETARCH} \
 ARG OPENCODE_VERSION=1.19.0
 RUN npm install -g opencode-ai@${OPENCODE_VERSION}
 
+# retries are handled by the proxy, not by opencode: its own schedule (5 attempts,
+# ~1 min) is hardcoded in the bun executable with no config key and no plugin hook.
+COPY --from=proxy-build /out/oc-retry-proxy /usr/local/bin/oc-retry-proxy
+
 # seeds copied into the mounted config dir on first run by the entrypoint
 COPY docker/opencode.default.jsonc /opt/opencode/opencode.default.jsonc
 COPY docker/AGENTS.default.md /opt/opencode/AGENTS.default.md
 COPY docker/cli.default.json /opt/opencode/cli.default.json
+COPY docker/retry.default.json /opt/opencode/retry.default.json
+COPY docker/plugins/retry.ts /opt/opencode/plugins/retry.ts
 COPY docker/entrypoint.sh /usr/local/bin/opencode-entrypoint.sh
 COPY docker/verify.sh /usr/local/bin/opencode-verify.sh
 RUN chmod 755 /usr/local/bin/opencode-entrypoint.sh /usr/local/bin/opencode-verify.sh
@@ -79,5 +93,13 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # default model when the config dir is seeded for the first time. switch to a
 # zai-coding-plan/* id if you pay for the GLM Coding Plan instead of the API.
 ENV OPENCODE_DEFAULT_MODEL="zai/glm-5.3"
+
+# default retry policy for the proxy. the seeded plugin can override any of it
+# per session (and per provider) without a restart; these are the fallback for
+# requests that arrive without the plugin's header.
+ENV OC_RETRY_MAX="200"
+ENV OC_RETRY_CAP="60000"
+ENV OC_RETRY_BASE="2000"
+ENV OC_RETRY_DEADLINE="3h"
 
 ENTRYPOINT ["/usr/local/bin/opencode-entrypoint.sh"]

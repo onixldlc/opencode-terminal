@@ -87,21 +87,88 @@ Per-agent system prompts go in `config/.config/opencode/opencode.jsonc`, which i
 | `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` / `cli.json` |
 | `OPENCODE_CONFIG_CONTENT` | Your own inline JSON config; its keys win over the ones above |
 | `OPENCODE_TERMINAL_DEBUG=1` | Print the assembled inline config to stderr |
+| `OC_RETRY_MAX` | Proxy retry attempts before giving up (default `200`) |
+| `OC_RETRY_CAP` | Ceiling for one retry delay in ms (default `60000`) |
+| `OC_RETRY_BASE` | First retry delay in ms, doubling each attempt (default `2000`) |
+| `OC_RETRY_DEADLINE` | Stop retrying after this long (default `3h`) |
+| `OC_PROXY=off` | Don't start the retry proxy at all |
+| `OC_PROXY_INSECURE=1` | Disable TLS verification inside the container (last resort) |
 
 The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer, which **merges** into your config files — scalars replace, arrays append — so nothing in the mounted config dir is rewritten behind your back.
 
 ## what's inside
 
-`node:22-bookworm-slim` plus the opencode CLI and the same toolchain as llm-terminal: python3, go, a headless JRE, rust, ripgrep, fzf, git, passwordless sudo. Runs as `dev` (UID/GID 1000 by default).
+`node:22-bookworm-slim` plus the opencode CLI, the `oc-retry-proxy` binary and the same toolchain as llm-terminal: python3, go, a headless JRE, rust, ripgrep, fzf, git, passwordless sudo. Runs as `dev` (UID/GID 1000 by default).
 
 | Path | Holds |
 |---|---|
 | `~/.config/opencode/opencode.jsonc` | Config: model, agents, instructions |
 | `~/.config/opencode/AGENTS.md` | Global system prompt |
 | `~/.config/opencode/cli.json` | TUI settings: `session.thinking`, `session.verbosity`, theme, keybinds |
-| `~/.config/opencode/plugins/` | Local plugins, auto-loaded by opencode |
+| `~/.config/opencode/plugins/` | Local plugins, auto-loaded by opencode (incl. `retry.ts`) |
+| `~/.config/opencode/retry.json` | Retry policy, read per request |
+| `~/.config/opencode-terminal/ca.pem` | The proxy's CA, generated on first run |
 | `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
 | `~/.local/share/opencode/auth.json` | Legacy credential file, if an older version wrote one |
+
+## retries
+
+opencode gives up on a busy provider after **5** attempts — 2s, 4s, 8s, 16s, 32s
+capped to 30s, about a minute total. On a provider under load that is one "Model
+busy, retry later" away from dropping your turn. The schedule is compiled into
+its binary: no config key reaches it, and the plugin API has no retry hook.
+
+So the container retries one layer down instead. `oc-retry-proxy` is a small Go
+binary that every outbound request passes through; a 429 or 5xx is retried there
+for as long as the policy allows, and opencode only ever sees the attempt that
+worked. It intercepts TLS rather than rewriting `baseURL`s, so **every provider is
+covered, including ones you add later**, with no per-provider configuration.
+
+Default policy: 200 attempts, 2s backoff doubling to a 60s ceiling, 3h deadline.
+
+| attempts | delay each | running total |
+|---|---|---|
+| 1–5 | 2s, 4s, 8s, 16s, 32s | ~60s |
+| 6–200 | 60s | **~3h 15m** |
+
+A provider's own `retry-after` header is honoured when it sends one. Requests
+that would be slow to answer are held open as an event stream with SSE keepalive
+comments, so a long wait doesn't trip opencode's 5-minute header timeout.
+
+### changing the policy
+
+`~/.config/opencode/retry.json`, read per request — edits apply to the session
+already running:
+
+```json
+{
+  "default":   { "max": 200, "base": 2000, "cap": 60000, "deadline": "3h" },
+  "providers": { "deepinfra": { "max": 400, "deadline": "6h" },
+                 "zai":       { "max": 5,   "cap": 30000 } }
+}
+```
+
+The seeded plugin at `~/.config/opencode/plugins/retry.ts` turns that into an
+`x-oc-retry` header on each call, which the proxy reads and strips before the
+request goes upstream. Delete the plugin and the proxy falls back to the
+`OC_RETRY_*` environment defaults.
+
+### the certificate
+
+The proxy terminates TLS, so it needs a CA. One is generated **per container on
+first run** into the mounted config dir (`~/.config/opencode-terminal/ca.pem`,
+key `0600`) and added to the container's own trust store at startup. No CA is
+baked into the published image — that would be a private key shipped to everyone
+who pulls it. Your host's trust store is never touched.
+
+bun honours `NODE_EXTRA_CA_CERTS` for direct connections but ignores it for
+tunnelled ones, which is why the CA goes into the system store rather than an
+env var. If a provider call ever fails with a certificate error, `OC_PROXY=off`
+disables the proxy entirely (back to opencode's 5 attempts), and
+`OC_PROXY_INSECURE=1` is the blunt fallback — it stops opencode verifying
+certificates at all, trusting the local proxy blindly. The proxy still verifies
+the real provider in that mode, so the unverified hop is 127.0.0.1, but anything
+else in the container inherits it too.
 
 ## expanded thinking
 
@@ -114,9 +181,7 @@ open exploration and instruction groups.
 On plugins: opencode 1.19 loads local plugins from `~/.config/opencode/plugins/`
 automatically, and the `plugin` array in `opencode.jsonc` is for **npm packages
 only** -- an absolute path there is treated as a package name and fails to
-install. Its hook set (`@opencode-ai/plugin@1.19.0`) has no retry hook, so the
-retry schedule (10 attempts over ~84s, hardcoded) cannot be changed by a plugin
-on this version. That arrived in the v2 line (`@opencode/cli@2.x`).
+install. That is where the seeded `retry.ts` lives.
 
 ## build locally
 
