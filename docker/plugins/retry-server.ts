@@ -111,10 +111,21 @@ const server = async ({ client }: any) => {
     let announced = 0        // when the current episode was last toasted
     let active = false       // whether an episode is in flight
 
-    const toast = (message: string, variant: string, duration?: number) =>
-      client?.tui
-        ?.showToast({ title: "Provider busy", message, variant, duration })
-        ?.catch?.(() => {})
+    // the client handed to a plugin is the raw generated one: the payload goes
+    // in `body`. Passing the fields flat answers 400 "Expected object, got
+    // undefined" and resolves normally, so a wrong shape here is silent --
+    // which is exactly how this went unnoticed. Anything other than 200 is
+    // printed rather than swallowed.
+    const toast = async (message: string, variant: string, duration?: number) => {
+      try {
+        const res: any = await client?.tui?.showToast({
+          body: { title: "Provider busy", message, variant, duration },
+        })
+        if (res?.error) console.error("[retry] toast rejected:", JSON.stringify(res.error))
+      } catch (e: any) {
+        console.error("[retry] toast failed:", e?.message ?? e)
+      }
+    }
 
     const tick = async () => {
       let live: RetryState[] = []
@@ -134,7 +145,7 @@ const server = async ({ client }: any) => {
         const now = Date.now()
         if (now - announced > REMIND_MS) {
           announced = now
-          toast(
+          void toast(
             `${worst.host} returned ${worst.reason}. Retry ${worst.attempt}/${worst.max}` +
               `, next in ${human(worst.next_in_ms)} (waiting ${human(worst.elapsed_ms)}).` +
               ` Still working -- no need to send anything.`,
@@ -153,9 +164,9 @@ const server = async ({ client }: any) => {
         if (!last) return
         const tries = `${last.attempt} ${last.attempt === 1 ? "retry" : "retries"}`
         if (last.ok) {
-          toast(`${last.host} recovered after ${tries} over ${human(last.elapsed_ms)}.`, "success", 5_000)
+          void toast(`${last.host} recovered after ${tries} over ${human(last.elapsed_ms)}.`, "success", 5_000)
         } else {
-          toast(
+          void toast(
             `${last.host} never recovered -- gave up after ${tries} over ${human(last.elapsed_ms)}.`,
             "error",
             8_000,
