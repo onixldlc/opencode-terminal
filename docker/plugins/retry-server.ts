@@ -1,5 +1,15 @@
 // Drives the retry proxy, and reports what it is doing.
 //
+// This is the server half. opencode loads a plugin module by its default export,
+// which must be {id, server()} or {id, tui()} -- never both, and a plugin loaded
+// from a path must carry an id. The entrypoint registers this file as a file://
+// entry in the config's `plugin` array; that array is the only thing loaded as a
+// hooks plugin and the only thing handed a client. (A file dropped in a
+// `plugins/` directory is a third loader, wanting {id, setup}, with no hooks and
+// no client -- it loads into nothing.)
+//
+// The TUI half, which registers the /retry command, is retry-tui.ts.
+//
 // opencode's own retry schedule is compiled into its binary -- 5 attempts over
 // about a minute, with no config key and no plugin hook to reach it. The
 // container sends every model call through oc-retry-proxy instead, which does
@@ -93,7 +103,7 @@ function human(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
-export const RetryPolicy = async ({ client }: any) => {
+const server = async ({ client }: any) => {
   // one watcher per process, however many times the module is evaluated
   if (!(globalThis as any).__ocRetryWatcher) {
     ;(globalThis as any).__ocRetryWatcher = true
@@ -168,3 +178,5 @@ export const RetryPolicy = async ({ client }: any) => {
     },
   }
 }
+
+export default { id: "opencode-terminal-retry", server }

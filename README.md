@@ -84,7 +84,7 @@ Per-agent system prompts go in `config/.config/opencode/opencode.jsonc`, which i
 | `OPENCODE_SYSTEM_PROMPT` | Literal text appended to the system prompt |
 | `OPENCODE_SYSTEM_PROMPT_FILE` | Readable path appended to the system prompt |
 | `OPENCODE_DEFAULT_MODEL` | Model written into the config **only** when it is seeded (default `zai/glm-5.3`) |
-| `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` / `cli.json` |
+| `OPENCODE_SKIP_SEED=1` | Do not create `opencode.jsonc` / `AGENTS.md` / `retry.json` |
 | `OPENCODE_CONFIG_CONTENT` | Your own inline JSON config; its keys win over the ones above |
 | `OPENCODE_TERMINAL_DEBUG=1` | Print the assembled inline config to stderr |
 | `OC_RETRY_MAX` | Proxy retry attempts before giving up (default `200`) |
@@ -104,8 +104,8 @@ The overrides are applied through opencode's own `OPENCODE_CONFIG_CONTENT` layer
 |---|---|
 | `~/.config/opencode/opencode.jsonc` | Config: model, agents, instructions |
 | `~/.config/opencode/AGENTS.md` | Global system prompt |
-| `~/.config/opencode/cli.json` | TUI settings: `session.thinking`, `session.verbosity`, theme, keybinds |
-| `~/.config/opencode/plugins/` | Local plugins, auto-loaded by opencode (incl. `retry.ts`) |
+| `~/.config/opencode/tui.json` | TUI settings: theme, keybinds, its own `plugin` array |
+| `~/.config/opencode/plugins/` | Local plugins (the `{id, setup}` kind, not hooks) |
 | `~/.config/opencode/retry.json` | Retry policy, read per request |
 | `~/.config/opencode-terminal/ca.pem` | The proxy's CA, generated on first run |
 | `~/.local/share/opencode/opencode.db` | Credentials, sessions, messages, projects (SQLite) |
@@ -160,21 +160,32 @@ same thing as JSON, and the proxy logs every attempt to
 
 ### changing the policy
 
-From inside the TUI, press **`!`** on an empty prompt to enter shell mode, then:
+Slash commands, registered by the TUI half of the plugin:
 
 ```
-!retry                     show the current policy
+/retry             show the current policy
+/retry-stock       5 attempts, ~1 min    (what opencode does on its own)
+/retry-long        200 attempts, ~3h     (the default)
+/retry-marathon    2000 attempts, 24h
+```
+
+These are palette commands like `/agents` or `/expand`, so they just run -- no
+message is sent and no tokens are spent. They take no arguments, though: a
+palette command's `run()` is called with none, and `/retry 400` would miss the
+command and be sent to the model as text. For an arbitrary value, press **`!`**
+on an empty prompt for shell mode:
+
+```
 !retry 400                 400 attempts
 !retry 400 60 6h           400 attempts, 60s ceiling, 6h deadline
 !retry deepinfra 500       just that provider
-!retry off                 back to roughly stock opencode (5 attempts)
+!retry off                 back to roughly stock opencode
 ```
 
-Shell mode runs the command and prints the result without sending anything to
-the model, so changing the policy costs nothing. (A `/command` would not: those
-are prompt templates, and the expanded text is submitted as a turn.) It takes
-effect on the next request -- no restart. `oc-retry` is the same command under a
-longer name.
+Shell mode runs the command and prints its output without prompting the model
+either. (A `command/*.md` file would not: those are prompt templates, and the
+expanded text is submitted as a turn.) Either way it takes effect on the next
+request, with no restart.
 
 Or edit `~/.config/opencode/retry.json` directly — it is read per request, so
 edits apply to the session already running:
@@ -187,10 +198,9 @@ edits apply to the session already running:
 }
 ```
 
-The seeded plugin at `~/.config/opencode/plugins/retry.ts` turns that into an
-`x-oc-retry` header on each call, which the proxy reads and strips before the
-request goes upstream. Delete the plugin and the proxy falls back to the
-`OC_RETRY_*` environment defaults.
+The server half of the plugin turns that into an `x-oc-retry` header on each
+call, which the proxy reads and strips before the request goes upstream.
+Requests that arrive without it get the `OC_RETRY_*` environment defaults.
 
 ### the certificate
 
@@ -211,16 +221,28 @@ else in the container inherits it too.
 
 ## expanded thinking
 
-`cli.json` is the TUI's own config, separate from `opencode.jsonc`. It is seeded
-with `session.thinking: "show"` so model reasoning renders expanded instead of
-collapsed to a one-line summary. The in-TUI toggle (`ctrl+p` -> "Expand
-thinking") rewrites this same file. Add `"verbosity": "high"` next to it to also
-open exploration and instruction groups.
+Toggle it in the TUI: `ctrl+p` -> "thinking" (the `session.toggle.thinking`
+command), which persists for the session.
 
-On plugins: opencode 1.19 loads local plugins from `~/.config/opencode/plugins/`
-automatically, and the `plugin` array in `opencode.jsonc` is for **npm packages
-only** -- an absolute path there is treated as a package name and fails to
-install. That is where the seeded `retry.ts` lives.
+Earlier versions of this image seeded `cli.json` with `session.thinking: "show"`
+on the belief that it was the TUI's config file. It is not -- opencode 1.19 reads
+`tui.json`, and the string `cli.json` does not appear anywhere in its binary, so
+that file never had any effect. The entrypoint removes it if it is still the
+inert one that shipped.
+
+On plugins: opencode 1.19 has three loaders that are easy to confuse.
+
+| where it is registered | what it gets | export |
+|---|---|---|
+| `plugin` array in the opencode config | server hooks (`chat.headers`, `event`, ...) and a client | `default { id, server() }` |
+| `plugin` array in **`tui.json`** | the TUI api: palette commands, toasts, theme, kv | `default { id, tui() }` |
+| a `{plugin,plugins}/*.ts` file in a config dir | agents, commands, skills | `default { id, setup() }` |
+
+One module exports `server()` or `tui()`, never both, and a plugin loaded from a
+path must carry an `id`. The retry plugin is two files for exactly that reason:
+`retry-server.ts` stamps the header, `retry-tui.ts` registers the commands. The
+entrypoint registers the first through `OPENCODE_CONFIG_CONTENT` and the second
+through `OPENCODE_TUI_CONFIG`, so neither needs a file you own to be edited.
 
 ## build locally
 

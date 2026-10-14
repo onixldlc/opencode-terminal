@@ -83,8 +83,8 @@ rm -rf "$proxy_dir"
 
 echo "== seeds =="
 for f in /opt/opencode/opencode.default.jsonc /opt/opencode/AGENTS.default.md \
-         /opt/opencode/cli.default.json /opt/opencode/retry.default.json \
-         /opt/opencode/plugins/retry.ts; do
+         /opt/opencode/retry.default.json \
+         /opt/opencode/plugins/retry-server.ts /opt/opencode/plugins/retry-tui.ts; do
   [[ -r "$f" ]] && ok "$f" || bad "$f missing"
 done
 
@@ -121,9 +121,7 @@ else
   bad "entrypoint did not seed opencode.jsonc"
 fi
 [[ -r "$probe/.config/opencode/AGENTS.md" ]] && ok "seeded AGENTS.md" || bad "AGENTS.md not seeded"
-[[ -r "$probe/.config/opencode/cli.json" ]] && ok "seeded cli.json" || bad "cli.json not seeded"
 [[ -r "$probe/.config/opencode/retry.json" ]] && ok "seeded retry.json" || bad "retry.json not seeded"
-[[ -r "$probe/.config/opencode/plugins/retry.ts" ]] && ok "seeded plugins/retry.ts" || bad "plugins/retry.ts not seeded"
 
 # Everything below runs against a throwaway HOME so the check never writes into
 # a mounted config dir.
@@ -146,9 +144,7 @@ else
   bad "entrypoint did not seed opencode.jsonc"
 fi
 [[ -r "$probe/.config/opencode/AGENTS.md" ]] && ok "seeded AGENTS.md" || bad "AGENTS.md not seeded"
-[[ -r "$probe/.config/opencode/cli.json" ]] && ok "seeded cli.json" || bad "cli.json not seeded"
 [[ -r "$probe/.config/opencode/retry.json" ]] && ok "seeded retry.json" || bad "retry.json not seeded"
-[[ -r "$probe/.config/opencode/plugins/retry.ts" ]] && ok "seeded plugins/retry.ts" || bad "plugins/retry.ts not seeded"
 
 echo "== glm providers =="
 # Every GLM provider on models.dev authenticates via ZHIPU_API_KEY, so a dummy

@@ -59,9 +59,9 @@ RUN ln -s oc-retry-proxy /usr/local/bin/oc-retry \
 # seeds copied into the mounted config dir on first run by the entrypoint
 COPY docker/opencode.default.jsonc /opt/opencode/opencode.default.jsonc
 COPY docker/AGENTS.default.md /opt/opencode/AGENTS.default.md
-COPY docker/cli.default.json /opt/opencode/cli.default.json
 COPY docker/retry.default.json /opt/opencode/retry.default.json
-COPY docker/plugins/retry.ts /opt/opencode/plugins/retry.ts
+COPY docker/plugins/retry-server.ts /opt/opencode/plugins/retry-server.ts
+COPY docker/plugins/retry-tui.ts /opt/opencode/plugins/retry-tui.ts
 COPY docker/entrypoint.sh /usr/local/bin/opencode-entrypoint.sh
 COPY docker/verify.sh /usr/local/bin/opencode-verify.sh
 RUN chmod 755 /usr/local/bin/opencode-entrypoint.sh /usr/local/bin/opencode-verify.sh

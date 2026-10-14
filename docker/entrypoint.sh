@@ -35,27 +35,12 @@ if [[ "${OPENCODE_SKIP_SEED:-0}" != "1" ]]; then
     echo "[opencode-terminal] seeded $OC_CONFIG_DIR/AGENTS.md" >&2
   fi
 
-  # cli.json is the TUI's own config, separate from opencode.jsonc. Shipping it
-  # with session.thinking=show keeps reasoning expanded; the in-TUI toggle
-  # rewrites this same file.
-  if [[ ! -e "$OC_CONFIG_DIR/cli.json" ]]; then
-    cp "$SEED_DIR/cli.default.json" "$OC_CONFIG_DIR/cli.json"
-    echo "[opencode-terminal] seeded $OC_CONFIG_DIR/cli.json" >&2
-  fi
 
   # retry.json drives the proxy through the seeded plugin. Both are copied, never
   # overwritten -- edits survive an image upgrade.
   if [[ ! -e "$OC_CONFIG_DIR/retry.json" ]]; then
     cp "$SEED_DIR/retry.default.json" "$OC_CONFIG_DIR/retry.json"
     echo "[opencode-terminal] seeded $OC_CONFIG_DIR/retry.json" >&2
-  fi
-  # plugins/ (plural) is auto-loaded by opencode. The `plugin` array in
-  # opencode.jsonc is for npm package names only -- a path there is treated as a
-  # package and fails to install.
-  if [[ ! -e "$OC_CONFIG_DIR/plugins/retry.ts" ]]; then
-    mkdir -p "$OC_CONFIG_DIR/plugins"
-    cp "$SEED_DIR/plugins/retry.ts" "$OC_CONFIG_DIR/plugins/retry.ts"
-    echo "[opencode-terminal] seeded $OC_CONFIG_DIR/plugins/retry.ts" >&2
   fi
 fi
 
@@ -64,6 +49,28 @@ fi
 # what changing a setting should do. Shell mode (! on an empty prompt) runs
 # `!retry 400` with no prompt at all, so the command file is removed -- but only
 # when it is still byte-for-byte the one that was shipped.
+# v1.2.0-v1.2.2 copied the plugin into plugins/, which turned out to be a
+# different loader entirely: that one wants a default export of {id, setup} and
+# never sees a hooks plugin, so the file sat there doing nothing. The plugin is
+# registered through the config array now, from the image, and the dead copy is
+# removed when it is still recognisably ours.
+# cli.json was seeded by earlier versions on the belief that it was the TUI's
+# config file. It is not: opencode 1.19 reads tui.json and the string "cli.json"
+# does not appear in its binary at all, so that file never did anything. Remove
+# it when it is still the inert one that shipped.
+STALE_CLI="$OC_CONFIG_DIR/cli.json"
+if [[ -f "$STALE_CLI" ]] && [[ "$(tr -d '[:space:]' <"$STALE_CLI")" == '{"session":{"thinking":"show"}}' ]]; then
+  rm -f "$STALE_CLI"
+  echo "[opencode-terminal] removed cli.json; opencode 1.19 never read it (toggle thinking with ctrl+p -> thinking)" >&2
+fi
+
+STALE_PLUGIN="$OC_CONFIG_DIR/plugins/retry.ts"
+if [[ -f "$STALE_PLUGIN" ]] && grep -q 'x-oc-retry' "$STALE_PLUGIN"; then
+  rm -f "$STALE_PLUGIN"
+  rmdir "$OC_CONFIG_DIR/plugins" 2>/dev/null || true
+  echo "[opencode-terminal] removed the inert plugins/retry.ts; the plugin now loads from the image" >&2
+fi
+
 STALE_CMD="$OC_CONFIG_DIR/command/retry.md"
 if [[ -f "$STALE_CMD" ]] && grep -q 'oc-retry \$ARGUMENTS' "$STALE_CMD" \
    && [[ "$(wc -c <"$STALE_CMD")" -lt 300 ]]; then
@@ -136,6 +143,22 @@ if [[ "${OC_PROXY:-on}" != "off" ]]; then
     export https_proxy="$HTTPS_PROXY" http_proxy="$HTTP_PROXY"
     export NO_PROXY="localhost,127.0.0.1,::1"
     export no_proxy="$NO_PROXY"
+    # only register the plugins when there is a proxy for them to drive
+    if [[ -r "$SEED_DIR/plugins/retry-server.ts" ]]; then
+      export OC_RETRY_PLUGIN="$SEED_DIR/plugins/retry-server.ts"
+    fi
+    # the TUI keeps its own plugin list, in tui.json rather than the opencode
+    # config, so OPENCODE_CONFIG_CONTENT cannot reach it. OPENCODE_TUI_CONFIG
+    # layers an extra tui config on top, which is how /retry gets registered
+    # without editing a file the user owns.
+    if [[ -r "$SEED_DIR/plugins/retry-tui.ts" ]]; then
+      if [[ -n "${OPENCODE_TUI_CONFIG:-}" ]]; then
+        echo "[opencode-terminal] OPENCODE_TUI_CONFIG is set, so /retry is not registered; add $SEED_DIR/plugins/retry-tui.ts to its plugin array to get it back." >&2
+      else
+        printf '{"plugin":["file://%s"]}\n' "$SEED_DIR/plugins/retry-tui.ts" > "$PROXY_DIR/tui-plugin.json"
+        export OPENCODE_TUI_CONFIG="$PROXY_DIR/tui-plugin.json"
+      fi
+    fi
     [[ -n "${OPENCODE_TERMINAL_DEBUG:-}" ]] && echo "[opencode-terminal] retry proxy on $PROXY_ADDR" >&2
   else
     echo "[opencode-terminal] retry proxy did not start, continuing without it." >&2
@@ -165,6 +188,14 @@ import json, os
 
 override = {}
 instructions = []
+
+# The retry plugin has to be registered here rather than dropped in a config
+# directory: only entries in this array are loaded as hook plugins, and only
+# those are handed the client the toasts go through. OPENCODE_CONFIG_CONTENT
+# appends to arrays, so a plugin list of the user's own survives.
+plugin = os.environ.get("OC_RETRY_PLUGIN", "").strip()
+if plugin:
+    override["plugin"] = ["file://" + plugin]
 
 model = os.environ.get("OPENCODE_MODEL", "").strip()
 if model:
