@@ -64,8 +64,17 @@ const CONFIG_PATH = join(
 )
 const STATUS_URL = `http://${process.env.OC_PROXY_ADDR || "127.0.0.1:8787"}/__oc/status`
 
-const POLL_MS = 3_000      // how often to ask the proxy what it is doing
-const REMIND_MS = 60_000   // how often to re-toast while it is still retrying
+const POLL_MS = 3_000       // how often to ask the proxy what it is doing
+const REMIND_MS = 60_000    // how often to re-toast while it is still retrying
+const STATUS_POLL_MS = 1_500 // how often to ask opencode what it is doing
+
+type Toast = (message: string, variant: string, duration?: number, title?: string) => Promise<void>
+
+// toast bodies are one line; the provider's message can be a whole JSON blob
+function oneLine(text: string, max = 120): string {
+  const flat = text.replace(/\s+/g, " ").trim()
+  return flat.length > max ? flat.slice(0, max - 1) + "…" : flat
+}
 
 let cached: Config = {}
 let cachedAt = -1
@@ -103,6 +112,78 @@ function human(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
+// opencode's own retry ceiling, compiled into the binary as a module-level
+// `var` with no config key and no env var. Only needed to render "3 of 5".
+const STOCK_MAX = 5
+
+// Watches opencode's own retries, which are a different thing from the proxy's.
+// The proxy holds the connection open and never hands the failure back, so while
+// it is working opencode sees a slow request, not a failed one, and schedules
+// nothing. These fire when the proxy is off (OC_PROXY=off), when it gives up, or
+// when an error it does not retry gets through -- exactly the cases where the
+// session would otherwise go quiet.
+//
+// Read by polling `client.session.status()`, which answers
+// `{ "<sessionID>": {type:"retry", attempt, message, next} }` while a retry is
+// pending. The event stream would be the obvious route and is not usable here:
+// `serverUrl` advertises a port nothing listens on, and `client.event.subscribe()`
+// returns a stream that never yields in-process. Both were tried.
+const watchSessions = (client: any, toast: Toast, busy: () => boolean) => {
+  const seen = new Map<string, number>() // sessionID -> highest attempt seen
+
+  const finish = (id: string) => {
+    const attempts = seen.get(id)
+    if (attempts === undefined) return
+    seen.delete(id)
+    const tries = `${attempts} ${attempts === 1 ? "retry" : "retries"}`
+    // retrying only stops early because the call went through; reaching the
+    // ceiling is the only way opencode stops while still failing. An interrupt
+    // also lands here and reads as a recovery, which is the harmless way round.
+    if (attempts >= STOCK_MAX) {
+      void toast(`opencode gave up after ${tries} -- its own limit is ${STOCK_MAX}.`, "error", 8_000, "Retrying")
+    } else {
+      void toast(`opencode recovered after ${tries}.`, "success", 5_000, "Retrying")
+    }
+  }
+
+  const tick = async () => {
+    let statuses: Record<string, any>
+    try {
+      const res: any = await client?.session?.status()
+      statuses = (res?.data ?? res) as Record<string, any>
+      if (!statuses || typeof statuses !== "object") return
+    } catch {
+      return
+    }
+
+    for (const [id, status] of Object.entries(statuses)) {
+      if (status?.type !== "retry") continue
+      const attempt = status.attempt ?? 0
+      if (seen.get(id) === attempt) continue // same attempt, already said so
+      seen.set(id, attempt)
+      // the proxy is already toasting about this provider; don't say it twice
+      if (busy()) continue
+      const wait = typeof status.next === "number" ? status.next - Date.now() : 0
+      void toast(
+        `opencode is retrying: attempt ${attempt} of ${STOCK_MAX}` +
+          (wait > 0 ? `, next in ${human(wait)}` : "") +
+          `. ${oneLine(status.message ?? "")}`,
+        "warning",
+        6_000,
+        "Retrying",
+      )
+    }
+
+    // a session that was retrying and no longer is has settled, one way or other
+    for (const id of [...seen.keys()]) {
+      if (statuses[id]?.type !== "retry" && statuses[id]?.type !== "busy") finish(id)
+    }
+  }
+
+  const timer = setInterval(() => void tick(), STATUS_POLL_MS)
+  timer.unref?.()
+}
+
 const server = async ({ client }: any) => {
   // one watcher per process, however many times the module is evaluated
   if (!(globalThis as any).__ocRetryWatcher) {
@@ -116,10 +197,10 @@ const server = async ({ client }: any) => {
     // undefined" and resolves normally, so a wrong shape here is silent --
     // which is exactly how this went unnoticed. Anything other than 200 is
     // printed rather than swallowed.
-    const toast = async (message: string, variant: string, duration?: number) => {
+    const toast = async (message: string, variant: string, duration?: number, title = "Provider busy") => {
       try {
         const res: any = await client?.tui?.showToast({
-          body: { title: "Provider busy", message, variant, duration },
+          body: { title, message, variant, duration },
         })
         if (res?.error) console.error("[retry] toast rejected:", JSON.stringify(res.error))
       } catch (e: any) {
@@ -177,6 +258,8 @@ const server = async ({ client }: any) => {
 
     const timer = setInterval(() => void tick(), POLL_MS)
     timer.unref?.()
+
+    watchSessions(client, toast, () => active)
   }
 
   return {

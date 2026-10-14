@@ -158,6 +158,26 @@ api.deepinfra.com never recovered -- gave up after 200 retries over 3h.  (error)
 same thing as JSON, and the proxy logs every attempt to
 `~/.config/opencode-terminal/proxy.log`.
 
+opencode's *own* retries are reported too, which is a different thing. While the
+proxy is working it holds the connection open and never hands the failure back,
+so opencode sees a slow request rather than a failed one and schedules nothing.
+These show up when the proxy is off, when it gives up, or when an error it does
+not retry gets through:
+
+```
+Retrying
+opencode is retrying: attempt 3 of 5, next in 8s. Too Many Requests
+opencode gave up after 5 retries -- its own limit is 5.
+```
+
+That ceiling of 5 is compiled into the opencode binary — a module-level `var`
+with no config key and no environment variable, which is the whole reason the
+proxy exists. The status is read by polling `client.session.status()`, which
+answers `{"<sessionID>": {type:"retry", attempt, message, next}}`. The event
+stream would be the obvious route and does not work from a plugin: `serverUrl`
+advertises a port nothing listens on, and `client.event.subscribe()` returns a
+stream that never yields in-process.
+
 ### changing the policy
 
 Slash commands, registered by the TUI half of the plugin:
