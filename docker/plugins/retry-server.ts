@@ -64,9 +64,11 @@ const CONFIG_PATH = join(
 )
 const STATUS_URL = `http://${process.env.OC_PROXY_ADDR || "127.0.0.1:8787"}/__oc/status`
 
-const POLL_MS = 3_000       // how often to ask the proxy what it is doing
-const REMIND_MS = 60_000    // how often to re-toast while it is still retrying
-const STATUS_POLL_MS = 1_500 // how often to ask opencode what it is doing
+// Both watchers toast once per attempt, not on a timer. A retry that is quietly
+// rescheduled is the thing you want to see; a session that has been waiting
+// twenty minutes looks exactly like one that is thinking hard.
+const POLL_MS = 1_000        // how often to ask the proxy what it is doing
+const STATUS_POLL_MS = 1_000 // how often to ask opencode what it is doing
 
 type Toast = (message: string, variant: string, duration?: number, title?: string) => Promise<void>
 
@@ -189,8 +191,8 @@ const server = async ({ client }: any) => {
   if (!(globalThis as any).__ocRetryWatcher) {
     ;(globalThis as any).__ocRetryWatcher = true
 
-    let announced = 0        // when the current episode was last toasted
-    let active = false       // whether an episode is in flight
+    const announced = new Map<string, number>() // host -> last attempt toasted
+    let active = false                          // whether an episode is in flight
 
     // the client handed to a plugin is the raw generated one: the payload goes
     // in `body`. Passing the fields flat answers 400 "Expected object, got
@@ -221,14 +223,16 @@ const server = async ({ client }: any) => {
       }
 
       if (live.length > 0) {
-        const worst = live.reduce((a, b) => (b.elapsed_ms > a.elapsed_ms ? b : a))
         active = true
-        const now = Date.now()
-        if (now - announced > REMIND_MS) {
-          announced = now
+        // one toast per attempt per host. Early attempts are seconds apart and
+        // will arrive in a burst; once the delay reaches the ceiling they settle
+        // to one a minute on their own, without a timer deciding that for you.
+        for (const r of live) {
+          if (announced.get(r.host) === r.attempt) continue
+          announced.set(r.host, r.attempt)
           void toast(
-            `${worst.host} returned ${worst.reason}. Retry ${worst.attempt}/${worst.max}` +
-              `, next in ${human(worst.next_in_ms)} (waiting ${human(worst.elapsed_ms)}).` +
+            `${r.host} returned ${r.reason}. Retry ${r.attempt}/${r.max}` +
+              `, next in ${human(r.next_in_ms)} (waiting ${human(r.elapsed_ms)}).` +
               ` Still working -- no need to send anything.`,
             "warning",
             8_000,
@@ -241,7 +245,7 @@ const server = async ({ client }: any) => {
       // mistaken for one that came back on its own.
       if (active) {
         active = false
-        announced = 0
+        announced.clear()
         if (!last) return
         const tries = `${last.attempt} ${last.attempt === 1 ? "retry" : "retries"}`
         if (last.ok) {

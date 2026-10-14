@@ -147,7 +147,8 @@ api.deepinfra.com returned 503. Retry 7/200, next in 60s (waiting 5m 12s).
 Still working -- no need to send anything.
 ```
 
-repeated once a minute while it lasts, and closed out either way:
+once per attempt — early ones arrive seconds apart and settle to roughly one a
+minute as the backoff reaches its ceiling — and closed out either way:
 
 ```
 api.deepinfra.com recovered after 7 retries over 6m 2s.          (success)
